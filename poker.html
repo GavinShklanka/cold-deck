@@ -259,6 +259,47 @@ button.toggle.on{background:linear-gradient(180deg,#2c5a37,#16110a);color:#bfe6c
 .statline{display:flex;gap:12px;flex-wrap:wrap;font-family:var(--font-mono);font-size:10px;color:var(--muted);margin:6px 0 0;}
 .statline span b{color:var(--gold);}
 .blindtag{color:var(--muted);}
+
+/* ---------- thought bubbles ---------- */
+.thought-bubble{
+  position:absolute;z-index:9;pointer-events:none;
+  font-family:var(--font-mono);font-size:10px;letter-spacing:.3px;font-weight:600;
+  color:var(--gold);background:rgba(12,10,7,.92);
+  border:1px solid var(--gold-dim);border-radius:8px 8px 8px 2px;
+  padding:4px 9px;white-space:nowrap;max-width:150px;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 3px 10px rgba(0,0,0,.6);
+  opacity:0;animation:tbubble var(--tb-dur,1.5s) ease-out forwards;
+}
+.thought-bubble::after{
+  content:"";position:absolute;bottom:-5px;left:8px;
+  width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
+  border-top:5px solid var(--gold-dim);
+}
+@keyframes tbubble{
+  0%{opacity:0;transform:translateY(4px) scale(.9);}
+  10%{opacity:1;transform:translateY(0) scale(1);}
+  75%{opacity:1;}
+  100%{opacity:0;transform:translateY(-3px);}
+}
+
+/* ---------- coach panel ---------- */
+.coach-panel{
+  background:rgba(18,97,74,.12);border:1px solid rgba(18,97,74,.35);border-radius:10px;
+  padding:7px 10px;font-family:var(--font-mono);font-size:11px;line-height:1.5;
+  color:var(--ice2);
+}
+.coach-panel .coach-label{
+  font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim);
+  margin-bottom:3px;
+}
+.coach-panel .coach-pos{color:var(--gold);font-weight:600;}
+.coach-panel .coach-verdict{color:var(--text);margin-top:2px;}
+.coach-panel .coach-math{color:var(--muted);}
+.coach-tally{
+  font-family:var(--font-mono);font-size:10px;color:var(--muted);
+  text-align:center;padding:2px 0;
+}
+.coach-tally b{color:var(--gold);}
 </style>
 </head>
 <body>
@@ -277,6 +318,7 @@ button.toggle.on{background:linear-gradient(180deg,#2c5a37,#16110a);color:#bfe6c
       <button data-spd="turbo">🚀</button>
     </div>
     <button id="sitOutBtn" class="toggle">Sit Out</button>
+    <button id="coachBtn" class="toggle">Coach</button>
     <button id="playersBtn">Players &amp; Notes</button>
   </div>
   <div id="tableWrap"><div id="felt">
@@ -850,31 +892,107 @@ button.toggle.on{background:linear-gradient(180deg,#2c5a37,#16110a);color:#bfe6c
     }
 
     // ----- AI -----
+    // Per-archetype blend weights: ego share vs sense (equity/math) share.
+    // Ego share drives decisions from personality traits; sense share drives
+    // decisions from equity and pot odds. Tilt can shift blend toward ego.
+    static BLEND_WEIGHTS = {
+      "Thanos":          { ego: 0.30, sense: 0.70 },
+      "Kaboose":         { ego: 0.25, sense: 0.75 },
+      "Daniel Negreanu": { ego: 0.40, sense: 0.60 },
+      "Peter Griffin":   { ego: 0.65, sense: 0.35 },
+      "Sterling Archer": { ego: 0.60, sense: 0.40 },
+    };
+
     aiDecide(pid) {
       const p = this.players[pid];
       const toCall = this.betToCall - p.currentBet;
       const nOpp = this.inHand().length - 1;
-      const sims = this.community.length === 0 ? 90 : 130;
-      let eq = equityMC(p.hole, this.community, nOpp, sims);
+      const sims = this.community.length === 0 ? 90 : 120;
+      const eq = equityMC(p.hole, this.community, nOpp, sims);
       const t = p.traits || { aggression: 0.5, looseness: 0.5, bluff: 0.3, tilt: 0.2, chaos: 0.05 };
 
-      // chaos: occasionally do something random (Peter)
+      // --- blend weights with tilt shift ---
+      const bw = PokerGame.BLEND_WEIGHTS[p.name] || { ego: 0.50, sense: 0.50 };
+      // Tilt shifts blend toward ego (more reckless), but caps so no bot
+      // becomes pure ego. Tilt ceiling: ego can grow at most +0.25 from base.
+      const tiltFactor = t.tilt * Math.min(p.lossStreak, 4) / 4;
+      const tiltShift = tiltFactor * 0.25;
+      const egoW  = Math.min(bw.ego + tiltShift, bw.ego + 0.25);
+      const senseW = 1.0 - egoW;
+
+      // --- chaos: occasionally do something truly random (mainly Peter) ---
       if (this.rng() < t.chaos * 0.30) {
         const legal = this.legalActions(pid);
         const pick = legal[Math.floor(this.rng() * legal.length)];
         return this._materialize(p, pick, toCall);
       }
 
-      // tilt warps perceived equity when on a losing streak
-      const tiltAmt = t.tilt * Math.min(p.lossStreak, 4) / 4;
-      const eqPerceived = Math.max(0, Math.min(1, eq + (this.rng() - 0.45) * 0.35 * tiltAmt));
-
+      // --- pot odds ---
       const potNow = this.pot;
       const potOdds = toCall > 0 ? toCall / (potNow + toCall) : 0;
-      const bluffing = (eq < 0.40) && (this.rng() < t.bluff * 0.40);
+
+      // --- semi-polarized bluffing ---
+      // Bluff more with weak hands (low showdown value) that still have some
+      // equity draw potential. Medium made hands (eq 0.40–0.60) bluff less.
+      // Pure trash (eq < 0.20) bluffs at full bluff frequency.
+      // Mid-equity hands (0.20–0.45) are poor bluff candidates — they have
+      // showdown value but aren't strong enough to value-bet.
+      let bluffFreq = t.bluff;
+      if (eq < 0.20) {
+        bluffFreq *= 1.0;          // pure air: full bluff frequency
+      } else if (eq < 0.35) {
+        bluffFreq *= 0.25;         // marginal: don't bluff with showdown value
+      } else {
+        bluffFreq *= 0.10;         // decent hand: rarely bluff, just play it
+      }
+      const bluffing = this.rng() < bluffFreq * 0.45;
       p._bluffing = bluffing;
 
-      // sizing helper
+      // --- SENSE signal: what math says to do ---
+      // Returns a score: <0 = fold, 0-0.4 = call, >0.4 = raise, >0.85 = jam
+      const senseScore = (() => {
+        if (toCall <= 0) {
+          // No bet to face: score = how good equity is for betting
+          if (eq > 0.70) return 0.9;   // strong: bet/raise
+          if (eq > 0.52) return 0.5;   // decent: bet
+          if (eq > 0.35) return 0.1;   // marginal: check
+          return -0.1;                 // weak: check
+        }
+        // Facing a bet
+        const eqVsPotOdds = eq - potOdds;
+        if (eqVsPotOdds < -0.15) return -0.8;   // clear trash: fold hard
+        if (eqVsPotOdds < -0.05) return -0.3;   // marginal: lean fold
+        if (eqVsPotOdds < 0.10)  return 0.15;   // break-even: call
+        if (eqVsPotOdds < 0.25)  return 0.45;   // good: raise
+        return 0.85;                             // crushing: big raise/jam
+      })();
+
+      // --- EGO signal: what personality wants to do ---
+      // Based on aggression, looseness, and tilt — the "old" system, compressed
+      const egoScore = (() => {
+        // Tilt inflates perceived equity
+        const tiltBoost = (this.rng() - 0.40) * 0.35 * tiltFactor;
+        const eqPerceived = Math.max(0, Math.min(1, eq + tiltBoost));
+
+        if (toCall <= 0) {
+          const betUrge = t.aggression * eqPerceived;
+          if (eqPerceived > 0.50 || betUrge > 0.38) return 0.6;
+          return 0.0;
+        }
+        // facing bet: personality-driven thresholds
+        const callThresh = potOdds * (1.15 - 0.50 * t.looseness);
+        const raiseThresh = callThresh + 0.15 + 0.12 * (1 - t.aggression);
+        if (eqPerceived > raiseThresh) return 0.7;
+        if (eqPerceived > callThresh) return 0.2;
+        // below call threshold, loose players still want to peel
+        if (t.looseness > 0.60 && eqPerceived > callThresh * 0.7) return 0.1;
+        return -0.5;
+      })();
+
+      // --- blend the two signals ---
+      const blended = senseScore * senseW + egoScore * egoW;
+
+      // --- sizing helper ---
       const sizeRaise = () => {
         const frac = 0.45 + 0.55 * t.aggression;
         let target = this.betToCall + Math.round(potNow * frac);
@@ -883,32 +1001,58 @@ button.toggle.on{background:linear-gradient(180deg,#2c5a37,#16110a);color:#bfe6c
         return target;
       };
 
+      // --- action selection from blended score ---
       if (toCall <= 0) {
-        // check or bet
-        const betUrge = t.aggression * eqPerceived;
-        if (eqPerceived > 0.58 || bluffing || (betUrge > 0.42 && this.rng() < 0.7)) {
-          if (p.chips <= 0) return this._materialize(p, { type: "check" }, toCall);
-          let target = Math.max(this.bb, Math.round(potNow * (0.4 + 0.5 * t.aggression)));
+        // Not facing a bet: check or bet
+        if (bluffing && p.chips > 0) {
+          // bluff bet
+          let target = Math.max(this.bb, Math.round(potNow * (0.50 + 0.40 * t.aggression)));
           target = Math.min(p.currentBet + p.chips, Math.max(this.betToCall + this.lastRaise, this.betToCall + target));
           return this._materialize(p, { type: "bet", amount: target }, toCall);
+        }
+        if (blended > 0.35 && p.chips > 0) {
+          // value bet
+          let target = Math.max(this.bb, Math.round(potNow * (0.40 + 0.50 * t.aggression)));
+          target = Math.min(p.currentBet + p.chips, Math.max(this.betToCall + this.lastRaise, this.betToCall + target));
+          // add some randomness to the bet/check boundary
+          if (this.rng() < 0.75 + 0.20 * t.aggression) {
+            return this._materialize(p, { type: "bet", amount: target }, toCall);
+          }
         }
         return this._materialize(p, { type: "check" }, toCall);
       }
 
-      // facing a bet
-      const callThresh = potOdds * (1.15 - 0.45 * t.looseness);
-      const raiseThresh = callThresh + 0.18 + 0.10 * (1 - t.aggression);
+      // --- facing a bet ---
+      // Bluff raise (semi-polarized)
+      if (bluffing && p.chips > toCall) {
+        if (this.rng() < 0.50 + 0.40 * t.aggression) {
+          return this._materialize(p, { type: "raise", amount: sizeRaise() }, toCall);
+        }
+      }
 
-      if ((eqPerceived > raiseThresh && this.rng() < 0.55 + 0.4 * t.aggression) || bluffing) {
+      // Value raise
+      if (blended > 0.40 && this.rng() < 0.50 + 0.40 * t.aggression) {
         if (p.chips <= toCall) return this._materialize(p, { type: "allin" }, toCall);
+        // strong blended = consider jam
+        if (blended > 0.75 && this.rng() < 0.30 + 0.30 * t.aggression) {
+          return this._materialize(p, { type: "allin" }, toCall);
+        }
         return this._materialize(p, { type: "raise", amount: sizeRaise() }, toCall);
       }
-      if (eqPerceived > callThresh) {
+
+      // Call
+      if (blended > -0.10) {
         return this._materialize(p, { type: "call" }, toCall);
       }
-      // weak: usually fold, sometimes tilt-call
-      if (toCall === 0) return this._materialize(p, { type: "check" }, toCall);
-      if (this.rng() < tiltAmt * 0.30) return this._materialize(p, { type: "call" }, toCall);
+
+      // Fold region — but pot-odds gate: even in fold territory, the ego
+      // share can keep a bot sticky. Archer's high ego means he peels more;
+      // Kaboose's low ego means he folds discipline.
+      // Also: tilt can cause hero-calls
+      const stickyChance = egoW * 0.35 + tiltFactor * 0.15;
+      if (this.rng() < stickyChance) {
+        return this._materialize(p, { type: "call" }, toCall);
+      }
       return this._materialize(p, { type: "fold" }, toCall);
     }
 
@@ -984,6 +1128,222 @@ function applyBlindLevel() {
 let game = null, busy = false, prevBoardLen = 0, lastCommunityLen = 0;
 let sitOut = false, finalized = false, gen = 0;
 const notesData = {}; // persists across New Game within the session
+
+/* ========== THOUGHT BUBBLES ========== */
+// Gate probability: ~40% chance to show a bubble on a notable action
+const BUBBLE_CHANCE = 0.40;
+
+// Short punchy battle-cry lines per bot, specifically for the bubble layer
+const BUBBLE_QUIPS = {
+  "Daniel Negreanu": {
+    raise: ["I sense weakness.", "Trapping.", "Small ball.", "Read you."],
+    fold:  ["Patience.", "Not this one."],
+    allin: ["All of it.", "Soul read."],
+    call:  ["Peeling.", "Sticky."],
+  },
+  "Thanos": {
+    raise: ["Inevitable.", "Dread it.", "Balance.", "Snap."],
+    fold:  ["A small price.", "Fine."],
+    allin: ["Endgame.", "Inevitable."],
+    call:  ["Calculated.", "Destiny."],
+  },
+  "Sterling Archer": {
+    raise: ["RAMPAGE.", "Danger zone.", "LANA!", "Sploosh."],
+    fold:  ["Whatever.", "Boring."],
+    allin: ["RAMPAGE!", "I'm a spy.", "DANGER ZONE!"],
+    call:  ["Phrasing?", "I guess."],
+  },
+  "Peter Griffin": {
+    raise: ["Hehehe!", "Freakin sweet.", "Roadhouse.", "Holy crap!"],
+    fold:  ["Ah, forget it.", "Dangit."],
+    allin: ["Hehehe, all in!", "NICE!", "Yolo!"],
+    call:  ["Why not?", "Hehehe."],
+  },
+  "Kaboose": {
+    raise: ["+EV.", "Solved.", "Optimal.", "Exploiting."],
+    fold:  ["–EV. Pass.", "Folding."],
+    allin: ["GTO jam.", "Max pressure."],
+    call:  ["Flatting.", "Priced in."],
+  },
+};
+
+// Determine if an action is notable enough to potentially show a bubble
+function isNotableAction(lastAction, bb) {
+  if (!lastAction) return false;
+  const t = lastAction.type;
+  // Raise, bet, all-in are always notable
+  if (t === "raise" || t === "bet" || t === "allin") return true;
+  // Call larger than 3 big blinds is notable
+  if (t === "call" && lastAction.amount > bb * 3) return true;
+  // Fold facing a raise larger than 4 big blinds is notable
+  if (t === "fold" && lastAction.amount === 0) {
+    // We need the bet size that was faced — approximate from pot context
+    // Use the game's betToCall as the raise they faced
+    return false; // handled separately in driveLoop with context
+  }
+  return false;
+}
+
+// Show a thought bubble above the bot's seat
+function showThoughtBubble(pid, actionKind) {
+  const p = game.players[pid];
+  if (!p || p.isHuman) return;
+
+  // Pick text: prefer bubble-specific quips, fall back to ARCHETYPES quips
+  const bubbleArr = BUBBLE_QUIPS[p.name] && BUBBLE_QUIPS[p.name][actionKind];
+  const archArr = PC.ARCHETYPES[p.name] && PC.ARCHETYPES[p.name].quips[actionKind];
+  const pool = bubbleArr || archArr;
+  if (!pool || !pool.length) return;
+  const text = pool[Math.floor(Math.random() * pool.length)];
+
+  const seat = document.querySelector('.seat[data-id="' + pid + '"]');
+  if (!seat) return;
+
+  // Remove any existing bubble on this seat
+  seat.querySelectorAll(".thought-bubble").forEach(e => e.remove());
+
+  const bubble = document.createElement("div");
+  bubble.className = "thought-bubble";
+  bubble.textContent = text;
+  // Scale duration by game speed
+  const dur = D(1500);
+  bubble.style.setProperty("--tb-dur", dur + "ms");
+  // Position above the pod (name plate area)
+  bubble.style.bottom = "calc(100% + 6px)";
+  bubble.style.left = "4px";
+  seat.appendChild(bubble);
+  setTimeout(() => bubble.remove(), dur + 50);
+}
+
+// Called after a bot acts: checks notability, gates on probability, shows bubble
+function maybeShowBubble(pid, decType, betAmount, facedBet) {
+  if (game.players[pid].isHuman) return;
+  const bb = game.bb;
+
+  // Determine if this action is notable
+  let notable = false;
+  let bubbleKind = decType; // raise, fold, call, allin, bet, check
+
+  if (decType === "raise" || decType === "bet") { notable = true; bubbleKind = "raise"; }
+  else if (decType === "allin") { notable = true; bubbleKind = "allin"; }
+  else if (decType === "call" && betAmount > bb * 3) { notable = true; bubbleKind = "call"; }
+  else if (decType === "fold" && facedBet > bb * 4) { notable = true; bubbleKind = "fold"; }
+
+  if (!notable) return;
+
+  // Gate: only ~BUBBLE_CHANCE of the time
+  if (Math.random() >= BUBBLE_CHANCE) return;
+
+  showThoughtBubble(pid, bubbleKind);
+}
+
+/* ========== POKER COACH ========== */
+let coachEnabled = false;
+let coachStats = { agreed: 0, total: 0 };
+let lastCoachVerdict = null; // "fold", "call", "raise" — what the coach recommended
+
+function classifyPosition(posLabel) {
+  if (!posLabel) return { zone: "unknown", advice: "" };
+  const p = posLabel.toUpperCase();
+  if (p === "SB" || p === "BB") {
+    return { zone: "blind",
+      advice: p === "BB"
+        ? "Big blind — out of position postflop. Play tighter and avoid bloating the pot without a strong hand."
+        : "Small blind — worst position. Play tight, complete selectively, or squeeze with premiums." };
+  }
+  if (p === "UTG" || p.startsWith("UTG+")) {
+    return { zone: "early",
+      advice: "Early position — many players left to act. Play only strong hands, you'll be out of position postflop." };
+  }
+  if (p === "HJ") {
+    return { zone: "middle",
+      advice: "Hijack — middle position. You can open a bit wider, but respect raises from later seats." };
+  }
+  if (p === "CO") {
+    return { zone: "late",
+      advice: "Cutoff — late position, excellent spot. You can play wider and apply pressure, especially on tight blinds." };
+  }
+  if (p === "BTN") {
+    return { zone: "late",
+      advice: "Button — the best position at the table. Play wide, use your positional advantage to control the pot." };
+  }
+  return { zone: "unknown", advice: "Position not classified." };
+}
+
+function getCoachAdvice(s) {
+  const me = game.players[0];
+  const posLabel = game.positions()[0] || "";
+  const posInfo = classifyPosition(posLabel);
+  const toCall = s.betToCall - me.currentBet;
+  const nOpp = Math.max(1, game.inHand().length - 1);
+  const eq = PC.equityMC(me.hole, s.community, nOpp, 120);
+  const eqPct = Math.round(eq * 100);
+
+  let verdictHtml = "";
+  let verdict = "neutral"; // "fold", "call", "raise"
+
+  if (toCall > 0) {
+    const potOdds = toCall / (s.pot + toCall);
+    const poPct = Math.round(potOdds * 100);
+    const eqVsPrice = eq - potOdds;
+
+    if (eqVsPrice > 0.12) {
+      verdict = "raise";
+      verdictHtml = '<span class="coach-math">Pot odds <b>' + poPct + '%</b> · Equity <b>~' + eqPct + '%</b></span>' +
+        '<div class="coach-verdict">Equity ' + eqPct + '% comfortably beats the ' + poPct + '% you need. ' +
+        'Calling is profitable — consider raising if your hand is strong.</div>';
+    } else if (eqVsPrice > -0.05) {
+      verdict = "call";
+      verdictHtml = '<span class="coach-math">Pot odds <b>' + poPct + '%</b> · Equity <b>~' + eqPct + '%</b></span>' +
+        '<div class="coach-verdict">Equity is roughly break-even with the price. ' +
+        'Calling is marginal — lean toward calling with draws or position, folding without.</div>';
+    } else {
+      verdict = "fold";
+      verdictHtml = '<span class="coach-math">Pot odds <b>' + poPct + '%</b> · Equity <b>~' + eqPct + '%</b></span>' +
+        '<div class="coach-verdict">Equity ' + eqPct + '% is below the ' + poPct + '% price. ' +
+        'A fold is the disciplined play unless you have a strong read.</div>';
+    }
+  } else {
+    // Not facing a bet
+    if (eq > 0.65) {
+      verdict = "raise";
+      verdictHtml = '<span class="coach-math">No bet to call · Equity <b>~' + eqPct + '%</b></span>' +
+        '<div class="coach-verdict">Strong hand. Consider betting for value to build the pot.</div>';
+    } else if (eq > 0.45) {
+      verdict = "call"; // "check" mapped to call bucket
+      verdictHtml = '<span class="coach-math">No bet to call · Equity <b>~' + eqPct + '%</b></span>' +
+        '<div class="coach-verdict">Decent hand. A check is fine to control pot size, or bet to deny equity.</div>';
+    } else {
+      verdict = "call"; // check
+      verdictHtml = '<span class="coach-math">No bet to call · Equity <b>~' + eqPct + '%</b></span>' +
+        '<div class="coach-verdict">Marginal hand. Check and see a free card — no need to bloat the pot.</div>';
+    }
+  }
+
+  lastCoachVerdict = verdict;
+
+  return '<div class="coach-panel">' +
+    '<div class="coach-label">🎓 Coach</div>' +
+    '<div class="coach-pos">' + escapeHtml(posLabel || "?") + ' — ' + escapeHtml(posInfo.advice) + '</div>' +
+    verdictHtml +
+    '</div>';
+}
+
+function recordCoachAgreement(humanAction) {
+  if (!coachEnabled || !lastCoachVerdict) return;
+  coachStats.total++;
+  // Map human action to coach buckets
+  let bucket;
+  if (humanAction === "fold") bucket = "fold";
+  else if (humanAction === "call" || humanAction === "check") bucket = "call";
+  else bucket = "raise"; // raise, bet, allin
+
+  if (bucket === lastCoachVerdict) coachStats.agreed++;
+  // Also count raise when coach said call (close enough — not a disagreement on direction)
+  else if (bucket === "raise" && lastCoachVerdict === "call") coachStats.agreed++;
+  else if (bucket === "call" && lastCoachVerdict === "raise") coachStats.agreed++;
+  lastCoachVerdict = null;
+}
 
 /* ---------- cards ---------- */
 function cardEl(c, faceUp, animate, delayMs) {
@@ -1130,6 +1490,20 @@ function renderActionBar(s) {
     (myPos ? '<span>Pos <b>' + myPos + "</b></span>" : "");
   bar.appendChild(odds);
 
+  // Coach panel (only when coach is ON)
+  if (coachEnabled) {
+    const coachDiv = document.createElement("div");
+    coachDiv.innerHTML = getCoachAdvice(s);
+    bar.appendChild(coachDiv.firstChild);
+    // Agreement tally
+    if (coachStats.total > 0) {
+      const tally = document.createElement("div");
+      tally.className = "coach-tally";
+      tally.innerHTML = "Coach agreement: <b>" + coachStats.agreed + " of " + coachStats.total + "</b> decisions";
+      bar.appendChild(tally);
+    }
+  }
+
   const row1 = document.createElement("div"); row1.className = "actrow";
   if (toCall > 0) {
     row1.appendChild(mkBtn("Fold", "fold", () => doHuman("fold")));
@@ -1181,6 +1555,7 @@ function mkBtn(label, cls, fn) {
 /* ---------- human action ---------- */
 function doHuman(type, amount) {
   if (busy) return;
+  recordCoachAgreement(type);
   game.act(0, type, amount);
   animateAction();
   renderAll();
@@ -1220,12 +1595,18 @@ function driveLoop() {
     const pid = game.acting;
     if (pid == null) { busy = false; driveLoop(); return; }
     let dec;
+    const facedBet = s2.betToCall; // capture before action modifies it
     if (pid === 0 && sitOut) {
       const toCall = s2.betToCall - me.currentBet;
       dec = toCall > 0 ? { type: "fold" } : { type: "check" };
     } else dec = game.aiDecide(pid);
     game.act(pid, dec.type, dec.amount);
     animateAction();
+    // Thought bubble: show on notable bot actions
+    const la = game.lastAction;
+    if (la && pid !== 0) {
+      maybeShowBubble(pid, dec.type, la.amount || 0, facedBet);
+    }
     busy = false;
     driveLoop();
   }, delay);
@@ -1332,6 +1713,8 @@ function freshLoop() {
 function newGame() {
   const nm = ($("#nameInput").value || "You").trim() || "You";
   game = new PC.PokerGame({ names: [nm, "Daniel Negreanu", "Thanos", "Sterling Archer", "Peter Griffin", "Kaboose"] });
+  coachStats = { agreed: 0, total: 0 };
+  lastCoachVerdict = null;
   freshLoop();
 }
 function nextHand() { if (game.activePlayers().length >= 2) freshLoop(); }
@@ -1387,6 +1770,12 @@ $("#sitOutBtn").onclick = () => {
   $("#sitOutBtn").classList.toggle("on", sitOut);
   $("#sitOutBtn").textContent = sitOut ? "Sitting Out ✓" : "Sit Out";
   if (sitOut && !busy) driveLoop();
+};
+$("#coachBtn").onclick = () => {
+  coachEnabled = !coachEnabled;
+  $("#coachBtn").classList.toggle("on", coachEnabled);
+  $("#coachBtn").textContent = coachEnabled ? "Coach ✓" : "Coach";
+  renderAll();
 };
 newGame();
 

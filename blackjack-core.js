@@ -39,6 +39,15 @@
     'none':              0,
   });
 
+  const LUCKY_SEVENS_PAYTABLE = Object.freeze({
+    'three-suited':    2000,
+    'three-unsuited':   500,
+    'two-suited':       100,
+    'two-unsuited':      50,
+    'one-seven':          3,
+    'none':               0,
+  });
+
   const INSURANCE_PAYTABLE = Object.freeze({
     'insurance-win':  2,
     'insurance-loss': 0,
@@ -60,6 +69,38 @@
       return { tier: 'colored', multiplier: PERFECT_PAIRS_PAYTABLE['colored'] };
     }
     return { tier: 'mixed', multiplier: PERFECT_PAIRS_PAYTABLE['mixed'] };
+  }
+
+  function evaluateLuckySevens(cards) {
+    if (!cards || cards.length === 0 || cards[0].rank !== '7') {
+      return { tier: 'none', multiplier: LUCKY_SEVENS_PAYTABLE['none'] };
+    }
+    if (cards.length === 1) {
+      return { tier: 'one-seven', multiplier: LUCKY_SEVENS_PAYTABLE['one-seven'] };
+    }
+    if (cards.length === 2) {
+      if (cards[1].rank !== '7') {
+        return { tier: 'one-seven', multiplier: LUCKY_SEVENS_PAYTABLE['one-seven'] };
+      }
+      const suited = cards[0].suit === cards[1].suit;
+      return suited 
+        ? { tier: 'two-suited', multiplier: LUCKY_SEVENS_PAYTABLE['two-suited'] }
+        : { tier: 'two-unsuited', multiplier: LUCKY_SEVENS_PAYTABLE['two-unsuited'] };
+    }
+    // cards.length >= 3
+    if (cards[1].rank === '7' && cards[2].rank === '7') {
+      const suited = cards[0].suit === cards[1].suit && cards[1].suit === cards[2].suit;
+      return suited
+        ? { tier: 'three-suited', multiplier: LUCKY_SEVENS_PAYTABLE['three-suited'] }
+        : { tier: 'three-unsuited', multiplier: LUCKY_SEVENS_PAYTABLE['three-unsuited'] };
+    }
+    if (cards[1].rank === '7') {
+      const suited = cards[0].suit === cards[1].suit;
+      return suited
+        ? { tier: 'two-suited', multiplier: LUCKY_SEVENS_PAYTABLE['two-suited'] }
+        : { tier: 'two-unsuited', multiplier: LUCKY_SEVENS_PAYTABLE['two-unsuited'] };
+    }
+    return { tier: 'one-seven', multiplier: LUCKY_SEVENS_PAYTABLE['one-seven'] };
   }
 
   function rankOrder(rank) {
@@ -203,8 +244,9 @@
       activeHandIndex: 0,
       bet: 0,
       insuranceStake: 0,
-      sideBetStakes: { perfectPairs: 0, twentyOnePlus3: 0 },
-      sideBetEvals:  { perfectPairs: null, twentyOnePlus3: null },
+      sideBetStakes: { perfectPairs: 0, twentyOnePlus3: 0, luckySevens: 0 },
+      sideBetEvals:  { perfectPairs: null, twentyOnePlus3: null, luckySevens: null },
+      luckySevensCards: [],
       phase: PHASE.BETTING,
       roundResults: null,
       shoeId: 0,
@@ -226,7 +268,15 @@
     }
 
     function dealCards(target, n) {
-      for (let i = 0; i < n; i++) target.push(draw());
+      for (let i = 0; i < n; i++) {
+        const c = draw();
+        target.push(c);
+        if (state.hands && state.hands[0] && target === state.hands[0].cards) {
+          if (state.luckySevensCards.length < 3) {
+            state.luckySevensCards.push(c);
+          }
+        }
+      }
     }
 
     function dealtCount() { return config.decks * 52 - state.shoe.length; }
@@ -239,15 +289,16 @@
       if (state.phase !== PHASE.BETTING && state.phase !== PHASE.SETTLED) {
         throw new Error('deal() not legal in phase ' + state.phase);
       }
-      let bet, perfectPairs, twentyOnePlus3;
+      let bet, perfectPairs, twentyOnePlus3, luckySevens;
       if (typeof arg === 'number') {
-        bet = arg; perfectPairs = 0; twentyOnePlus3 = 0;
+        bet = arg; perfectPairs = 0; twentyOnePlus3 = 0; luckySevens = 0;
       } else if (arg && typeof arg === 'object') {
         bet = arg.bet;
         perfectPairs   = (typeof arg.perfectPairs   === 'number' && arg.perfectPairs   > 0) ? arg.perfectPairs   : 0;
         twentyOnePlus3 = (typeof arg.twentyOnePlus3 === 'number' && arg.twentyOnePlus3 > 0) ? arg.twentyOnePlus3 : 0;
+        luckySevens    = (typeof arg.luckySevens    === 'number' && arg.luckySevens    > 0) ? arg.luckySevens    : 0;
       } else {
-        throw new Error('deal() expects a number or { bet, perfectPairs, twentyOnePlus3 }');
+        throw new Error('deal() expects a number or { bet, perfectPairs, twentyOnePlus3, luckySevens }');
       }
 
       if (typeof bet !== 'number' || !isFinite(bet)) throw new Error('bet must be a finite number');
@@ -255,7 +306,8 @@
       if (bet > config.maxBet) throw new Error('bet above max (' + config.maxBet + ')');
       if (perfectPairs   < 0) throw new Error('perfectPairs stake cannot be negative');
       if (twentyOnePlus3 < 0) throw new Error('twentyOnePlus3 stake cannot be negative');
-      if (bet + perfectPairs + twentyOnePlus3 > state.bankroll) {
+      if (luckySevens    < 0) throw new Error('luckySevens stake cannot be negative');
+      if (bet + perfectPairs + twentyOnePlus3 + luckySevens > state.bankroll) {
         throw new Error('total stake exceeds bankroll');
       }
 
@@ -264,11 +316,13 @@
       state.bankroll -= bet;
       state.bankroll -= perfectPairs;
       state.bankroll -= twentyOnePlus3;
+      state.bankroll -= luckySevens;
 
       state.bet = bet;
       state.insuranceStake = 0;
-      state.sideBetStakes = { perfectPairs: perfectPairs, twentyOnePlus3: twentyOnePlus3 };
-      state.sideBetEvals  = { perfectPairs: null, twentyOnePlus3: null };
+      state.sideBetStakes = { perfectPairs: perfectPairs, twentyOnePlus3: twentyOnePlus3, luckySevens: luckySevens };
+      state.sideBetEvals  = { perfectPairs: null, twentyOnePlus3: null, luckySevens: null };
+      state.luckySevensCards = [];
       state.dealer = [];
       state.dealerHoleHidden = true;
       state.hands = [{
@@ -286,6 +340,7 @@
       state.sideBetEvals = {
         perfectPairs:   evaluatePerfectPairs(state.hands[0].cards[0], state.hands[0].cards[1]),
         twentyOnePlus3: evaluate21p3(state.hands[0].cards[0], state.hands[0].cards[1], state.dealer[0]),
+        luckySevens:    evaluateLuckySevens(state.luckySevensCards),
       };
 
       const up = state.dealer[0];
@@ -354,7 +409,7 @@
       const firstTwo = h.cards.length === 2 && !h.doubled;
       if (firstTwo && state.bankroll >= h.bet) out.push('double');
       if (firstTwo
-          && h.cards[0].rank === h.cards[1].rank
+          && (h.cards[0].rank === h.cards[1].rank || (isTenValue(h.cards[0].rank) && isTenValue(h.cards[1].rank)))
           && state.hands.length < 4
           && state.bankroll >= h.bet) {
         out.push('split');
@@ -512,6 +567,18 @@
         });
       }
 
+      if (state.sideBetStakes.luckySevens > 0) {
+        const ev = evaluateLuckySevens(state.luckySevensCards);
+        const won = ev.multiplier > 0;
+        sideBets.push({
+          category: 'luckySevens',
+          stake: state.sideBetStakes.luckySevens,
+          outcome: ev.tier,
+          multiplier: ev.multiplier,
+          payout: won ? state.sideBetStakes.luckySevens * (ev.multiplier + 1) : 0,
+        });
+      }
+
       let insuranceResult = null;
       if (state.insuranceStake > 0) {
         const outcome = dealerBJ ? 'insurance-win' : 'insurance-loss';
@@ -552,7 +619,7 @@
       maybeFlagShuffle();
     }
 
-    function getState() {
+     function getState() {
       return {
         phase: state.phase,
         bankroll: state.bankroll,
@@ -561,6 +628,7 @@
         sideBetStakes: {
           perfectPairs:   state.sideBetStakes.perfectPairs,
           twentyOnePlus3: state.sideBetStakes.twentyOnePlus3,
+          luckySevens:    state.sideBetStakes.luckySevens,
         },
         dealer: state.dealer.map(cloneCard),
         dealerHoleHidden: state.dealerHoleHidden,
@@ -571,6 +639,7 @@
         needShuffle: state.needShuffle,
         cutIndex: state.cutIndex,
         results: state.roundResults,
+        luckySevensCards: state.luckySevensCards ? state.luckySevensCards.map(cloneCard) : [],
         config: {
           decks: config.decks,
           penetration: config.penetration,
@@ -603,8 +672,10 @@
     shuffleInPlace: shuffleInPlace,
     evaluatePerfectPairs: evaluatePerfectPairs,
     evaluate21p3: evaluate21p3,
+    evaluateLuckySevens: evaluateLuckySevens,
     PERFECT_PAIRS_PAYTABLE: PERFECT_PAIRS_PAYTABLE,
     TWENTY_ONE_PLUS_3_PAYTABLE: TWENTY_ONE_PLUS_3_PAYTABLE,
+    LUCKY_SEVENS_PAYTABLE: LUCKY_SEVENS_PAYTABLE,
     INSURANCE_PAYTABLE: INSURANCE_PAYTABLE,
     RANKS: RANKS,
     SUITS: SUITS,

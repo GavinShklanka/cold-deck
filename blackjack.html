@@ -368,6 +368,10 @@ header{
         <div class="ring" id="ringPP">0</div>
         <div class="nm">Perfect Pairs</div>
       </div>
+      <div class="side-spot" id="spotLS" data-cat="luckySevens" style="left:50%; top:33%; transform:translate(-50%,-50%);">
+        <div class="ring" id="ringLS">0</div>
+        <div class="nm">Lucky 7s</div>
+      </div>
       <div class="side-spot" id="sp213" data-cat="twentyOnePlus3">
         <div class="ring" id="ring213">0</div>
         <div class="nm">21 + 3</div>
@@ -387,6 +391,33 @@ header{
   <div id="banner">
     <div class="quip" id="quipLine">Marlow nods. "Place your bets."</div>
     <div id="resultLines"></div>
+  </div>
+
+  <!-- Hint Advice Panel -->
+  <div id="hintBox" style="display:none; margin:8px 14px 0; background:linear-gradient(180deg, rgba(125,211,252,0.06), rgba(0,0,0,0)); border:1px dashed rgba(125,211,252,0.25); border-radius:10px; padding:10px 12px; font-family:var(--font-mono); font-size:12px; color:var(--text); letter-spacing:.5px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div>Advice: <span id="hintAdvice" style="color:var(--ice); font-weight:bold;">-</span></div>
+      <div style="margin-left:auto;">Accuracy: <span id="hintTally" style="color:var(--gold);">0 of 0 (100%)</span></div>
+    </div>
+    <div id="hintMistakes" style="font-size:10px; color:var(--muted); margin-top:8px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px; display:none;">
+      <strong>Mistakes:</strong>
+      <ul id="mistakesList" style="margin:4px 0 0; padding-left:16px; max-height:80px; overflow-y:auto; list-style-type:square;"></ul>
+    </div>
+  </div>
+
+  <!-- Bet & Counting Coach Panel -->
+  <div id="coachBox" style="display:none; margin:8px 14px 0; background:linear-gradient(180deg, rgba(212,175,55,0.06), rgba(0,0,0,0)); border:1px dashed rgba(212,175,55,0.25); border-radius:10px; padding:10px 12px; font-family:var(--font-mono); font-size:12px; color:var(--text); letter-spacing:.5px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+      <div>Running Count: <span id="runCount" style="color:var(--gold); font-weight:bold;">0</span></div>
+      <div style="margin-left:14px;">True Count: <span id="trueCount" style="color:var(--gold); font-weight:bold;">0.0</span></div>
+      <div style="margin-left:auto;">Suggested Bet: <span id="suggestedBet" style="color:var(--slide); font-weight:bold;">$10</span></div>
+    </div>
+    <div id="sideBetAdvice" style="font-size:10px; color:var(--muted); margin-top:6px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:4px;">
+      Side-bet EV: PP (Skip, -EV), 21+3 (Skip, -EV), Lucky 7s (Skip, -EV)
+    </div>
+    <div style="font-size:9px; color:var(--muted); margin-top:4px; font-style:italic;">
+      Note: Counting is an educational illustration. The house edge and reshuffle still apply.
+    </div>
   </div>
 
   <div id="controls">
@@ -409,6 +440,21 @@ header{
         <button data-s="fast">Fast</button>
         <button data-s="turbo">Turbo</button>
       </div>
+    </div>
+
+    <!-- HINTS & COACH ROW -->
+    <div id="coachRow" style="display:flex;justify-content:center;align-items:center;gap:6px;padding:6px 4px 4px;flex-wrap:wrap;">
+      <span class="speedLabel" style="font-family:var(--font-mono);font-size:9px;letter-spacing:2px;color:var(--gold-dim);text-transform:uppercase;">Bet Coach</span>
+      <div class="seg" id="coachSeg">
+        <button id="coachOff" class="on">Off</button>
+        <button id="coachOn">On</button>
+      </div>
+      <span class="speedLabel" style="font-family:var(--font-mono);font-size:9px;letter-spacing:2px;color:var(--gold-dim);text-transform:uppercase;margin-left:14px;">Hints</span>
+      <div class="seg" id="hintsSeg">
+        <button id="hintsOff" class="on">Off</button>
+        <button id="hintsOn">On</button>
+      </div>
+      <button class="h-btn" id="openReplayBtn" style="margin-left:14px; padding:6px 10px; font-size:10px; font-family:var(--font-mono); letter-spacing:1px; cursor:pointer;">Replay</button>
     </div>
 
     <!-- TIP ROW: cosmetic only. The honesty rule is enforced in the tip handler below. -->
@@ -471,6 +517,14 @@ header{
     'suited-trips': 100, 'straight-flush': 40, 'three-of-a-kind': 30,
     'straight': 10, 'flush': 5, 'none': 0,
   });
+  const LUCKY_SEVENS_PAYTABLE = Object.freeze({
+    'three-suited':    2000,
+    'three-unsuited':   500,
+    'two-suited':       100,
+    'two-unsuited':      50,
+    'one-seven':          3,
+    'none':               0,
+  });
   const INSURANCE_PAYTABLE = Object.freeze({
     'insurance-win': 2, 'insurance-loss': 0,
   });
@@ -482,6 +536,37 @@ header{
     const sameColor = (RED_SUITS[c1.suit] === RED_SUITS[c2.suit]);
     if (sameColor) return { tier: 'colored', multiplier: PERFECT_PAIRS_PAYTABLE['colored'] };
     return { tier: 'mixed', multiplier: PERFECT_PAIRS_PAYTABLE['mixed'] };
+  }
+
+  function evaluateLuckySevens(cards) {
+    if (!cards || cards.length === 0 || cards[0].rank !== '7') {
+      return { tier: 'none', multiplier: LUCKY_SEVENS_PAYTABLE['none'] };
+    }
+    if (cards.length === 1) {
+      return { tier: 'one-seven', multiplier: LUCKY_SEVENS_PAYTABLE['one-seven'] };
+    }
+    if (cards.length === 2) {
+      if (cards[1].rank !== '7') {
+        return { tier: 'one-seven', multiplier: LUCKY_SEVENS_PAYTABLE['one-seven'] };
+      }
+      const suited = cards[0].suit === cards[1].suit;
+      return suited 
+        ? { tier: 'two-suited', multiplier: LUCKY_SEVENS_PAYTABLE['two-suited'] }
+        : { tier: 'two-unsuited', multiplier: LUCKY_SEVENS_PAYTABLE['two-unsuited'] };
+    }
+    if (cards[1].rank === '7' && cards[2].rank === '7') {
+      const suited = cards[0].suit === cards[1].suit && cards[1].suit === cards[2].suit;
+      return suited
+        ? { tier: 'three-suited', multiplier: LUCKY_SEVENS_PAYTABLE['three-suited'] }
+        : { tier: 'three-unsuited', multiplier: LUCKY_SEVENS_PAYTABLE['three-unsuited'] };
+    }
+    if (cards[1].rank === '7') {
+      const suited = cards[0].suit === cards[1].suit;
+      return suited
+        ? { tier: 'two-suited', multiplier: LUCKY_SEVENS_PAYTABLE['two-suited'] }
+        : { tier: 'two-unsuited', multiplier: LUCKY_SEVENS_PAYTABLE['two-unsuited'] };
+    }
+    return { tier: 'one-seven', multiplier: LUCKY_SEVENS_PAYTABLE['one-seven'] };
   }
   function rankOrder(rank) {
     if (rank === 'A') return 14;
@@ -578,8 +663,9 @@ header{
       bankroll: config.bankroll, shoe: [], discard: [], cutIndex: 0, needShuffle: true,
       dealer: [], dealerHoleHidden: true, hands: [], activeHandIndex: 0,
       bet: 0, insuranceStake: 0,
-      sideBetStakes: { perfectPairs: 0, twentyOnePlus3: 0 },
-      sideBetEvals:  { perfectPairs: null, twentyOnePlus3: null },
+      sideBetStakes: { perfectPairs: 0, twentyOnePlus3: 0, luckySevens: 0 },
+      sideBetEvals:  { perfectPairs: null, twentyOnePlus3: null, luckySevens: null },
+      luckySevensCards: [],
       phase: PHASE.BETTING, roundResults: null, shoeId: 0,
     };
     function newShoe() {
@@ -592,34 +678,48 @@ header{
       return state.shoe.length;
     }
     function draw() { if (state.shoe.length === 0) newShoe(); return state.shoe.pop(); }
-    function dealCards(target, n) { for (let i = 0; i < n; i++) target.push(draw()); }
+    function dealCards(target, n) {
+      for (let i = 0; i < n; i++) {
+        const c = draw();
+        target.push(c);
+        if (state.hands && state.hands[0] && target === state.hands[0].cards) {
+          if (state.luckySevensCards.length < 3) {
+            state.luckySevensCards.push(c);
+          }
+        }
+      }
+    }
     function dealtCount() { return config.decks * 52 - state.shoe.length; }
     function maybeFlagShuffle() { if (dealtCount() >= state.cutIndex) state.needShuffle = true; }
 
     function deal(arg) {
       if (state.phase !== PHASE.BETTING && state.phase !== PHASE.SETTLED)
         throw new Error('deal() not legal in phase ' + state.phase);
-      let bet, perfectPairs, twentyOnePlus3;
-      if (typeof arg === 'number') { bet = arg; perfectPairs = 0; twentyOnePlus3 = 0; }
+      let bet, perfectPairs, twentyOnePlus3, luckySevens;
+      if (typeof arg === 'number') { bet = arg; perfectPairs = 0; twentyOnePlus3 = 0; luckySevens = 0; }
       else if (arg && typeof arg === 'object') {
         bet = arg.bet;
         perfectPairs   = (typeof arg.perfectPairs   === 'number' && arg.perfectPairs   > 0) ? arg.perfectPairs   : 0;
         twentyOnePlus3 = (typeof arg.twentyOnePlus3 === 'number' && arg.twentyOnePlus3 > 0) ? arg.twentyOnePlus3 : 0;
-      } else { throw new Error('deal() expects a number or { bet, perfectPairs, twentyOnePlus3 }'); }
+        luckySevens    = (typeof arg.luckySevens    === 'number' && arg.luckySevens    > 0) ? arg.luckySevens    : 0;
+      } else { throw new Error('deal() expects a number or { bet, perfectPairs, twentyOnePlus3, luckySevens }'); }
       if (typeof bet !== 'number' || !isFinite(bet)) throw new Error('bet must be a finite number');
       if (bet < config.minBet) throw new Error('bet below min (' + config.minBet + ')');
       if (bet > config.maxBet) throw new Error('bet above max (' + config.maxBet + ')');
       if (perfectPairs   < 0) throw new Error('perfectPairs stake cannot be negative');
       if (twentyOnePlus3 < 0) throw new Error('twentyOnePlus3 stake cannot be negative');
-      if (bet + perfectPairs + twentyOnePlus3 > state.bankroll) throw new Error('total stake exceeds bankroll');
+      if (luckySevens    < 0) throw new Error('luckySevens stake cannot be negative');
+      if (bet + perfectPairs + twentyOnePlus3 + luckySevens > state.bankroll) throw new Error('total stake exceeds bankroll');
       if (state.needShuffle || state.shoe.length === 0) newShoe();
       state.bankroll -= bet;
       state.bankroll -= perfectPairs;
       state.bankroll -= twentyOnePlus3;
+      state.bankroll -= luckySevens;
       state.bet = bet;
       state.insuranceStake = 0;
-      state.sideBetStakes = { perfectPairs: perfectPairs, twentyOnePlus3: twentyOnePlus3 };
-      state.sideBetEvals  = { perfectPairs: null, twentyOnePlus3: null };
+      state.sideBetStakes = { perfectPairs: perfectPairs, twentyOnePlus3: twentyOnePlus3, luckySevens: luckySevens };
+      state.sideBetEvals  = { perfectPairs: null, twentyOnePlus3: null, luckySevens: null };
+      state.luckySevensCards = [];
       state.dealer = []; state.dealerHoleHidden = true;
       state.hands = [{
         cards: [], bet: bet, doubled: false, surrendered: false,
@@ -633,6 +733,7 @@ header{
       state.sideBetEvals = {
         perfectPairs:   evaluatePerfectPairs(state.hands[0].cards[0], state.hands[0].cards[1]),
         twentyOnePlus3: evaluate21p3(state.hands[0].cards[0], state.hands[0].cards[1], state.dealer[0]),
+        luckySevens:    evaluateLuckySevens(state.luckySevensCards),
       };
       const up = state.dealer[0];
       const playerBJ = isBlackjack(state.hands[0].cards);
@@ -672,7 +773,7 @@ header{
       const out = ['hit','stand'];
       const firstTwo = h.cards.length === 2 && !h.doubled;
       if (firstTwo && state.bankroll >= h.bet) out.push('double');
-      if (firstTwo && h.cards[0].rank === h.cards[1].rank && state.hands.length < 4 && state.bankroll >= h.bet) out.push('split');
+      if (firstTwo && (h.cards[0].rank === h.cards[1].rank || (isTenValue(h.cards[0].rank) && isTenValue(h.cards[1].rank))) && state.hands.length < 4 && state.bankroll >= h.bet) out.push('split');
       if (firstTwo && !h.fromSplit) out.push('surrender');
       return out;
     }
@@ -780,6 +881,13 @@ header{
           outcome: ev.tier, multiplier: ev.multiplier,
           payout: won ? state.sideBetStakes.twentyOnePlus3 * (ev.multiplier + 1) : 0 });
       }
+      if (state.sideBetStakes.luckySevens > 0) {
+        const ev = evaluateLuckySevens(state.luckySevensCards);
+        const won = ev.multiplier > 0;
+        sideBets.push({ category: 'luckySevens', stake: state.sideBetStakes.luckySevens,
+          outcome: ev.tier, multiplier: ev.multiplier,
+          payout: won ? state.sideBetStakes.luckySevens * (ev.multiplier + 1) : 0 });
+      }
       let insuranceResult = null;
       if (state.insuranceStake > 0) {
         const outcome = dealerBJ ? 'insurance-win' : 'insurance-loss';
@@ -807,12 +915,13 @@ header{
       return {
         phase: state.phase, bankroll: state.bankroll, bet: state.bet,
         insuranceStake: state.insuranceStake,
-        sideBetStakes: { perfectPairs: state.sideBetStakes.perfectPairs, twentyOnePlus3: state.sideBetStakes.twentyOnePlus3 },
+        sideBetStakes: { perfectPairs: state.sideBetStakes.perfectPairs, twentyOnePlus3: state.sideBetStakes.twentyOnePlus3, luckySevens: state.sideBetStakes.luckySevens },
         dealer: state.dealer.map(cloneCard), dealerHoleHidden: state.dealerHoleHidden,
         hands: state.hands.map(cloneHand), activeHandIndex: state.activeHandIndex,
         shoeRemaining: state.shoe.length, shoeId: state.shoeId,
         needShuffle: state.needShuffle, cutIndex: state.cutIndex,
         results: state.roundResults,
+        luckySevensCards: state.luckySevensCards ? state.luckySevensCards.map(cloneCard) : [],
         config: { decks: config.decks, penetration: config.penetration,
           dealerHitsSoft17: config.dealerHitsSoft17, minBet: config.minBet, maxBet: config.maxBet },
       };
@@ -827,8 +936,10 @@ header{
     isTenValue: isTenValue, rankValue: rankValue, buildShoe: buildShoe,
     shuffleInPlace: shuffleInPlace,
     evaluatePerfectPairs: evaluatePerfectPairs, evaluate21p3: evaluate21p3,
+    evaluateLuckySevens: evaluateLuckySevens,
     PERFECT_PAIRS_PAYTABLE: PERFECT_PAIRS_PAYTABLE,
     TWENTY_ONE_PLUS_3_PAYTABLE: TWENTY_ONE_PLUS_3_PAYTABLE,
+    LUCKY_SEVENS_PAYTABLE: LUCKY_SEVENS_PAYTABLE,
     INSURANCE_PAYTABLE: INSURANCE_PAYTABLE,
     RANKS: RANKS, SUITS: SUITS, PHASE: PHASE,
   };
@@ -852,7 +963,10 @@ header{
   function beat(ms) { return new Promise(function (r) { setTimeout(r, ms * SPEEDS[speed]); }); }
 
   // ---------- game ----------
-  const game = BJ.createGame({ bankroll: 1000, minBet: 5, maxBet: 500 });
+  let savedBankroll = localStorage.getItem('colddeck_blackjack_bankroll');
+  let bankrollAmt = savedBankroll !== null ? parseFloat(savedBankroll) : 1000;
+  if (isNaN(bankrollAmt) || bankrollAmt <= 0) bankrollAmt = 1000;
+  let game = BJ.createGame({ bankroll: bankrollAmt, minBet: 5, maxBet: 500 });
 
   // ---------- DOM refs ----------
   const $ = function (id) { return document.getElementById(id); };
@@ -861,19 +975,40 @@ header{
   const dealerCards = $('dealerCards'), dealerTotal = $('dealerTotal');
   const dealerArea = $('dealerArea');
   const playerHandsWrap = $('playerHandsWrap');
-  const mainStake = $('mainStake'), spotPP = $('spotPP'), sp213 = $('sp213');
-  const ringPP = $('ringPP'), ring213 = $('ring213'), betSpot = $('betSpot');
+  const mainStake = $('mainStake'), spotPP = $('spotPP'), sp213 = $('sp213'), spotLS = $('spotLS');
+  const ringPP = $('ringPP'), ring213 = $('ring213'), ringLS = $('ringLS'), betSpot = $('betSpot');
   const actionsRow = $('actions'), banner = $('banner');
   const quipLine = $('quipLine'), resultLines = $('resultLines');
   const armingLabel = $('armingLabel');
   const insuranceModal = $('insurance'), insYes = $('insYes'), insNo = $('insNo');
 
   // ---------- pre-deal stake state ----------
-  let pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0 };
+  let pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0, luckySevens: 0 };
   let armed = 'main';
   let dealingLock = false;
   let knownDealerCount = 0;
   let knownHandCounts = [];
+
+  // ---------- hints and bet coach state ----------
+  let hintsEnabled = false;
+  let coachEnabled = false;
+  let correctPlays = 0;
+  let totalPlays = 0;
+  let mistakes = [];
+
+  // ---------- replay state ----------
+  let replayHistory = [];
+  try {
+    const savedHistory = localStorage.getItem('colddeck_blackjack_history');
+    if (savedHistory) {
+      replayHistory = JSON.parse(savedHistory);
+      if (!Array.isArray(replayHistory)) replayHistory = [];
+    }
+  } catch (e) {
+    replayHistory = [];
+  }
+  let currentReplayEntry = null;
+  let currentReplayStepIndex = 0;
 
   // ---------- toke ledger (UI-only, see HONESTY comment in applyTip) ----------
   let tokesPaid = 0;
@@ -938,17 +1073,27 @@ header{
     bankAmt.textContent = displayedBankroll();
     tokeAmt.textContent = tokesPaid;
     tipTally.textContent = tokesPaid;
-    const totalPending = pending.main + pending.perfectPairs + pending.twentyOnePlus3;
+    const totalPending = pending.main + pending.perfectPairs + pending.twentyOnePlus3 + pending.luckySevens;
     const liveBet = (s.phase === PHASE.BETTING || s.phase === PHASE.SETTLED) ? totalPending : s.bet;
     curBet.textContent = liveBet;
     mainStake.textContent = pending.main || 0;
     ringPP.textContent = pending.perfectPairs || 0;
     ring213.textContent = pending.twentyOnePlus3 || 0;
-    armingLabel.textContent = 'Arming: ' + (armed === 'main' ? 'MAIN' : armed === 'perfectPairs' ? 'PERFECT PAIRS' : '21 + 3');
+    ringLS.textContent = pending.luckySevens || 0;
+    armingLabel.textContent = 'Arming: ' + (armed === 'main' ? 'MAIN' : armed === 'perfectPairs' ? 'PERFECT PAIRS' : armed === 'twentyOnePlus3' ? '21 + 3' : 'LUCKY 7S');
     betSpot.classList.toggle('armed', armed === 'main');
     spotPP.classList.toggle('armed', armed === 'perfectPairs');
     sp213.classList.toggle('armed', armed === 'twentyOnePlus3');
+    spotLS.classList.toggle('armed', armed === 'luckySevens');
+    
+    // Dynamic panels updates
+    updateCoachDisplay(s);
+    updateHintsDisplay(s);
+    
     refreshTipButtons();
+    
+    // Save to localStorage
+    localStorage.setItem('colddeck_blackjack_bankroll', s.bankroll);
   }
 
   // ---------- chip animations ----------
@@ -997,7 +1142,8 @@ header{
   function targetForArmed() {
     if (armed === 'main') return betSpot;
     if (armed === 'perfectPairs') return spotPP;
-    return sp213;
+    if (armed === 'twentyOnePlus3') return sp213;
+    return spotLS;
   }
 
   function clearDealer() { dealerCards.innerHTML = ''; knownDealerCount = 0; dealerTotal.style.display = 'none'; dealerTotal.textContent = ''; }
@@ -1073,10 +1219,17 @@ header{
     if (s.phase === PHASE.BETTING || s.phase === PHASE.SETTLED) {
       const dealBtn = document.createElement('button');
       dealBtn.className = 'action-btn primary'; dealBtn.textContent = 'Deal';
-      const totalPending = pending.main + pending.perfectPairs + pending.twentyOnePlus3;
+      const totalPending = pending.main + pending.perfectPairs + pending.twentyOnePlus3 + pending.luckySevens;
       dealBtn.disabled = pending.main < game.getState().config.minBet || totalPending > displayedBankroll();
       dealBtn.onclick = function () { onDeal(); };
       actionsRow.appendChild(dealBtn);
+      
+      if (displayedBankroll() < game.getState().config.minBet) {
+        const rstBtn = document.createElement('button');
+        rstBtn.className = 'action-btn ghost'; rstBtn.textContent = 'Reset Bank';
+        rstBtn.onclick = function () { resetBankroll(); };
+        actionsRow.appendChild(rstBtn);
+      }
       return;
     }
     if (s.phase === PHASE.PLAYER) {
@@ -1103,7 +1256,7 @@ header{
   function placeChip(value) {
     const s = game.getState();
     if (s.phase !== PHASE.BETTING && s.phase !== PHASE.SETTLED) return;
-    const totalPending = pending.main + pending.perfectPairs + pending.twentyOnePlus3;
+    const totalPending = pending.main + pending.perfectPairs + pending.twentyOnePlus3 + pending.luckySevens;
     if (value + totalPending > displayedBankroll()) return;
     pending[armed] += value;
     refreshBankrollAndBets();
@@ -1112,7 +1265,7 @@ header{
     flyChip(chipBtn, targetForArmed(), value, false);
   }
   function clearAllBets() {
-    pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0 };
+    pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0, luckySevens: 0 };
     refreshBankrollAndBets();
     renderActions();
   }
@@ -1172,12 +1325,16 @@ header{
     setPhaseTag('DEAL');
     let s;
     try {
-      s = game.deal({ bet: pending.main, perfectPairs: pending.perfectPairs, twentyOnePlus3: pending.twentyOnePlus3 });
+      s = game.deal({ bet: pending.main, perfectPairs: pending.perfectPairs, twentyOnePlus3: pending.twentyOnePlus3, luckySevens: pending.luckySevens });
     } catch (e) {
       setQuip('Marlow squints. "' + e.message + '"');
       dealingLock = false; renderActions(); return;
     }
-    pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0 };
+    
+    // Start replay entry
+    startNewReplayEntry(s, pending.main, pending.perfectPairs, pending.twentyOnePlus3, pending.luckySevens);
+    
+    pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0, luckySevens: 0 };
     refreshBankrollAndBets();
     const dealerSnapshot = s.dealer;
     const playerSnapshot = s.hands[0].cards;
@@ -1218,10 +1375,18 @@ header{
     if (dealingLock) return;
     dealingLock = true;
     const beforeActive = game.getState().activeHandIndex;
+    
+    // Capture decision for replay
+    recordPlayerDecision(beforeActive, action);
+    
     let s;
     try { s = game.act(beforeActive, action); }
     catch (e) { setQuip('Marlow: "' + e.message + '"'); dealingLock = false; renderActions(); return; }
     renderPlayerIncremental(s);
+    
+    // Capture resulting state
+    recordReplayState(s, `You played ${action.toUpperCase()} on Hand ${beforeActive + 1}.`);
+    
     if (s.phase === PHASE.PLAYER) {
       setPhaseTag('PLAYER'); dealingLock = false; renderActions(); return;
     }
@@ -1242,12 +1407,24 @@ header{
       await beat(420);
     }
     renderPlayerIncremental(s);
+    
+    // Capture dealer draws state
+    recordReplayState(s, `Dealer plays. Total: ${s.results ? s.results.dealerTotal : BJ.handValue(s.dealer).total}.`);
+    
     let results;
     try { results = game.settle(); }
     catch (e) { setQuip('Marlow: "' + e.message + '"'); return; }
+    
+    // Refresh state after settle to get results in finalState
+    s = game.getState();
+    
     setPhaseTag('SETTLED');
     paintResults(s, results);
     await payoutAnimations(results);
+    
+    // Save completed replay
+    saveCompletedReplayEntry(s, results);
+    
     refreshBankrollAndBets();
   }
 
@@ -1267,7 +1444,7 @@ header{
       const sb = results.sideBets[i];
       const row = document.createElement('div'); row.className = 'sbRow';
       const nm = document.createElement('span'); nm.className = 'nm';
-      nm.textContent = (sb.category === 'perfectPairs' ? 'Perfect Pairs' : sb.category === 'twentyOnePlus3' ? '21 + 3' : 'Insurance');
+      nm.textContent = (sb.category === 'perfectPairs' ? 'Perfect Pairs' : sb.category === 'twentyOnePlus3' ? '21 + 3' : sb.category === 'luckySevens' ? 'Lucky Sevens' : 'Insurance');
       const val = document.createElement('span'); val.className = 'val ' + (sb.payout > 0 ? 'win' : 'loss');
       val.textContent = sb.outcome + (sb.payout > 0 ? '  +' + sb.payout : '  lost');
       row.appendChild(nm); row.appendChild(val); resultLines.appendChild(row);
@@ -1296,7 +1473,7 @@ header{
     for (let i = 0; i < (results.sideBets || []).length; i++) {
       const sb = results.sideBets[i];
       if (sb.payout > 0) {
-        const from = sb.category === 'perfectPairs' ? spotPP : sb.category === 'twentyOnePlus3' ? sp213 : betSpot;
+        const from = sb.category === 'perfectPairs' ? spotPP : sb.category === 'twentyOnePlus3' ? sp213 : sb.category === 'luckySevens' ? spotLS : betSpot;
         flyChip(from, playerChipTarget, sb.payout, false); await beat(120);
       }
     }
@@ -1340,7 +1517,7 @@ header{
   document.querySelectorAll('.side-spot, #betSpot').forEach(function (el) {
     el.addEventListener('click', function () {
       const cat = el.dataset.cat;
-      if (cat === 'main' || cat === 'perfectPairs' || cat === 'twentyOnePlus3') { armed = cat; refreshBankrollAndBets(); }
+      if (cat === 'main' || cat === 'perfectPairs' || cat === 'twentyOnePlus3' || cat === 'luckySevens') { armed = cat; refreshBankrollAndBets(); }
     });
   });
   document.querySelectorAll('#speedSeg button').forEach(function (b) {
@@ -1368,6 +1545,621 @@ header{
   });
   document.getElementById('tipCustom').addEventListener('input', refreshTipButtons);
 
+  // ---------- Basic Strategy & Hint Engine ----------
+  function getBasicStrategy(cards, dealerUpCard, legal) {
+    if (!cards || cards.length < 2 || !dealerUpCard) return null;
+    const hv = BJ.handValue(cards);
+    const total = hv.total;
+    const isSoft = hv.soft;
+    const upVal = dealerUpCard.rank === 'A' ? 11 : BJ.rankValue(dealerUpCard.rank);
+
+    const canDouble = legal.indexOf('double') >= 0;
+    const canSplit = legal.indexOf('split') >= 0;
+    const canSurrender = legal.indexOf('surrender') >= 0;
+
+    // Pairs
+    const isPair = cards.length === 2 && (cards[0].rank === cards[1].rank || (BJ.isTenValue(cards[0].rank) && BJ.isTenValue(cards[1].rank)));
+    if (isPair && canSplit) {
+      let pRank = cards[0].rank;
+      if (BJ.isTenValue(cards[0].rank) && BJ.isTenValue(cards[1].rank)) {
+        pRank = '10';
+      }
+      if (pRank === 'A') return 'SPLIT';
+      if (pRank === '10') return 'STAND'; // Keep 20!
+      if (pRank === '9') {
+        if (upVal === 7 || upVal === 10 || upVal === 11) return 'STAND';
+        return 'SPLIT';
+      }
+      if (pRank === '8') return 'SPLIT';
+      if (pRank === '7') {
+        if (upVal <= 7) return 'SPLIT';
+        return 'HIT';
+      }
+      if (pRank === '6') {
+        if (upVal <= 6) return 'SPLIT';
+        return 'HIT';
+      }
+      if (pRank === '5') {
+        if (upVal <= 9) return canDouble ? 'DOUBLE' : 'HIT';
+        return 'HIT';
+      }
+      if (pRank === '4') {
+        if (upVal === 5 || upVal === 6) return 'SPLIT';
+        return 'HIT';
+      }
+      if (pRank === '3' || pRank === '2') {
+        if (upVal <= 7) return 'SPLIT';
+        return 'HIT';
+      }
+    }
+
+    // Soft Totals
+    if (isSoft) {
+      const other = total - 11;
+      if (other >= 9) return 'STAND';
+      if (other === 8) {
+        if (upVal === 6) return canDouble ? 'DOUBLE' : 'STAND';
+        return 'STAND';
+      }
+      if (other === 7) {
+        if (upVal <= 6) return canDouble ? 'DOUBLE' : 'STAND';
+        if (upVal === 7 || upVal === 8) return 'STAND';
+        return 'HIT';
+      }
+      if (other === 6) {
+        if (upVal >= 3 && upVal <= 6) return canDouble ? 'DOUBLE' : 'HIT';
+        return 'HIT';
+      }
+      if (other === 5 || other === 4) {
+        if (upVal >= 4 && upVal <= 6) return canDouble ? 'DOUBLE' : 'HIT';
+        return 'HIT';
+      }
+      if (other === 3 || other === 2) {
+        if (upVal >= 5 && upVal <= 6) return canDouble ? 'DOUBLE' : 'HIT';
+        return 'HIT';
+      }
+    }
+
+    // Hard Totals
+    if (total >= 17) return 'STAND';
+    if (total === 16) {
+      if (upVal >= 9) return canSurrender ? 'SURRENDER' : 'HIT';
+      if (upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 15) {
+      if (upVal >= 10) return canSurrender ? 'SURRENDER' : 'HIT';
+      if (upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 14 || total === 13) {
+      if (upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 12) {
+      if (upVal >= 4 && upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 11) return canDouble ? 'DOUBLE' : 'HIT';
+    if (total === 10) {
+      if (upVal <= 9) return canDouble ? 'DOUBLE' : 'HIT';
+      return 'HIT';
+    }
+    if (total === 9) {
+      if (upVal >= 3 && upVal <= 6) return canDouble ? 'DOUBLE' : 'HIT';
+      return 'HIT';
+    }
+    return 'HIT';
+  }
+
+  function getPairFallbackAdvice(cards, dealerUpCard, legal) {
+    const hv = BJ.handValue(cards);
+    const total = hv.total;
+    const isSoft = hv.soft;
+    const upVal = dealerUpCard.rank === 'A' ? 11 : BJ.rankValue(dealerUpCard.rank);
+    const canDouble = legal.indexOf('double') >= 0;
+    const canSurrender = legal.indexOf('surrender') >= 0;
+    if (isSoft) return 'HIT';
+    if (total >= 17) return 'STAND';
+    if (total === 16) {
+      if (upVal >= 9) return canSurrender ? 'SURRENDER' : 'HIT';
+      if (upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 15) {
+      if (upVal >= 10) return canSurrender ? 'SURRENDER' : 'HIT';
+      if (upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 14 || total === 12) {
+      if (upVal <= 6) return 'STAND';
+      return 'HIT';
+    }
+    if (total === 10) {
+      if (upVal <= 9) return canDouble ? 'DOUBLE' : 'HIT';
+      return 'HIT';
+    }
+    return 'HIT';
+  }
+
+  function getHandDescription(cards) {
+    if (!cards || cards.length === 0) return '';
+    const hv = BJ.handValue(cards);
+    const isSoft = hv.soft;
+    const isPair = cards.length === 2 && (cards[0].rank === cards[1].rank || (BJ.isTenValue(cards[0].rank) && BJ.isTenValue(cards[1].rank)));
+    if (isPair) {
+      if (cards[0].rank === cards[1].rank) {
+        return `pair of ${cards[0].rank === 'A' ? 'Aces' : cards[0].rank + 's'}`;
+      } else {
+        return `${cards[0].rank}-${cards[1].rank}`;
+      }
+    }
+    if (isSoft) {
+      const other = hv.total - 11;
+      return `soft ${hv.total} (A-${other})`;
+    }
+    return `${hv.total}`;
+  }
+
+  function getActionPastTense(action) {
+    if (action === 'hit') return 'Hit';
+    if (action === 'stand') return 'Stood';
+    if (action === 'double') return 'Doubled';
+    if (action === 'split') return 'Split';
+    if (action === 'surrender') return 'Surrendered';
+    return action;
+  }
+
+  function updateHintsDisplay(s) {
+    const hintBox = $('hintBox');
+    if (!hintsEnabled || s.phase !== PHASE.PLAYER) {
+      hintBox.style.display = 'none';
+      return;
+    }
+    const currentHand = s.hands[s.activeHandIndex];
+    if (!currentHand) {
+      hintBox.style.display = 'none';
+      return;
+    }
+    const legal = game.legalActions(s.activeHandIndex);
+    const advice = getBasicStrategy(currentHand.cards, s.dealer[0], legal);
+    if (advice) {
+      hintBox.style.display = '';
+      let text = advice;
+      if (advice === 'DOUBLE' && legal.indexOf('double') === -1) {
+        text += ' (Hit since Double is not allowed)';
+      }
+      if (advice === 'SURRENDER' && legal.indexOf('surrender') === -1) {
+        text += ' (Hit since Surrender is not allowed)';
+      }
+      if (advice === 'SPLIT' && legal.indexOf('split') === -1) {
+        const fallback = getPairFallbackAdvice(currentHand.cards, s.dealer[0], legal);
+        text += ` (Play fallback ${fallback} since Split is not allowed)`;
+      }
+      $('hintAdvice').textContent = text;
+    } else {
+      hintBox.style.display = 'none';
+    }
+  }
+
+  function updateHintTally() {
+    const pct = totalPlays > 0 ? Math.round(correctPlays / totalPlays * 100) : 100;
+    $('hintTally').textContent = `${correctPlays} of ${totalPlays} (${pct}%)`;
+    const list = $('mistakesList');
+    list.innerHTML = '';
+    if (mistakes.length > 0) {
+      $('hintMistakes').style.display = '';
+      mistakes.forEach(function (m) {
+        const li = document.createElement('li');
+        li.textContent = m;
+        list.appendChild(li);
+      });
+    } else {
+      $('hintMistakes').style.display = 'none';
+    }
+  }
+
+  // ---------- Card Counting & Bet Coach ----------
+  function getHiLoValue(rank) {
+    if (rank === '2' || rank === '3' || rank === '4' || rank === '5' || rank === '6') return 1;
+    if (rank === '7' || rank === '8' || rank === '9') return 0;
+    return -1;
+  }
+
+  function calculateRunningCount(s) {
+    let count = 0;
+    for (let i = 0; i < s.discard.length; i++) {
+      count += getHiLoValue(s.discard[i].rank);
+    }
+    for (let i = 0; i < s.hands.length; i++) {
+      const h = s.hands[i];
+      for (let j = 0; j < h.cards.length; j++) {
+        count += getHiLoValue(h.cards[j].rank);
+      }
+    }
+    for (let j = 0; j < s.dealer.length; j++) {
+      if (j === 1 && s.dealerHoleHidden) continue;
+      count += getHiLoValue(s.dealer[j].rank);
+    }
+    return count;
+  }
+
+  const BET_RAMP = {
+    BASE_BET: 10,
+    MIN_BET: 5,
+    RAMP_FACTOR: 15,
+    MAX_BET: 100,
+  };
+
+  function getSuggestedBet(trueCount) {
+    let suggested = BET_RAMP.BASE_BET;
+    if (trueCount < 0) {
+      suggested = BET_RAMP.MIN_BET;
+    } else if (trueCount > 1) {
+      suggested = BET_RAMP.BASE_BET + Math.floor((trueCount - 1) * BET_RAMP.RAMP_FACTOR);
+    }
+    suggested = Math.round(suggested / 5) * 5;
+    return Math.min(Math.max(suggested, BET_RAMP.MIN_BET), BET_RAMP.MAX_BET);
+  }
+
+  function updateCoachDisplay(s) {
+    const coachBox = $('coachBox');
+    if (!coachEnabled) {
+      coachBox.style.display = 'none';
+      return;
+    }
+    coachBox.style.display = '';
+    const run = calculateRunningCount(s);
+    const decks = Math.max(0.25, s.shoeRemaining / 52);
+    const tc = run / decks;
+    
+    $('runCount').textContent = (run > 0 ? '+' : '') + run;
+    $('trueCount').textContent = tc.toFixed(1);
+    $('suggestedBet').textContent = '$' + getSuggestedBet(tc);
+
+    const sbAdv = $('sideBetAdvice');
+    if (s.phase === PHASE.BETTING || s.phase === PHASE.SETTLED) {
+      sbAdv.textContent = 'Side-bet EV: PP (Skip, -EV), 21+3 (Skip, -EV), Lucky 7s (Skip, -EV)';
+      sbAdv.style.color = 'var(--muted)';
+    } else if (s.phase === PHASE.INSURANCE) {
+      if (tc >= 3.0) {
+        sbAdv.textContent = `Insurance EV: TAKE IT (+EV at True Count: ${tc.toFixed(1)} >= 3.0)`;
+        sbAdv.style.color = 'var(--gold)';
+      } else {
+        sbAdv.textContent = `Insurance EV: SKIP IT (Negative EV at True Count: ${tc.toFixed(1)} < 3.0)`;
+        sbAdv.style.color = 'var(--muted)';
+      }
+    } else {
+      sbAdv.textContent = 'Decisions phase active. Suggested bets locked.';
+      sbAdv.style.color = 'var(--muted)';
+    }
+  }
+
+  // ---------- Round Replay Recording ----------
+  let currentRoundEntry = null;
+
+  function startNewReplayEntry(s, mainBet, perfectPairs, twentyOnePlus3, luckySevens) {
+    currentRoundEntry = {
+      handNo: replayHistory.length + 1,
+      bet: mainBet,
+      sideBets: { perfectPairs, twentyOnePlus3, luckySevens },
+      startBankroll: s.bankroll + mainBet + perfectPairs + twentyOnePlus3 + luckySevens,
+      netDelta: 0,
+      dealerStart: s.dealer.map(function (c) { return { rank: c.rank, suit: c.suit }; }),
+      dealerFull: [],
+      dealerTotal: 0,
+      dealerBJ: false,
+      hands: [],
+      states: []
+    };
+    recordReplayState(s, `Initial cards dealt. Main bet: $${mainBet}.`);
+  }
+
+  function recordPlayerDecision(handIndex, action) {
+    if (!currentRoundEntry) return;
+    const s = game.getState();
+    const currentHand = s.hands[handIndex];
+    if (!currentHand) return;
+    const legal = game.legalActions(handIndex);
+    const advice = getBasicStrategy(currentHand.cards, s.dealer[0], legal);
+    const matched = advice ? (action.toUpperCase() === advice) : true;
+    
+    if (!currentRoundEntry.hands[handIndex]) {
+      currentRoundEntry.hands[handIndex] = {
+        startCards: currentHand.cards.slice(0, 2).map(function (c) { return { rank: c.rank, suit: c.suit }; }),
+        allCards: [],
+        actions: [],
+        actionChoices: [],
+        finalTotal: 0,
+        outcome: '',
+        payout: 0
+      };
+    }
+    
+    currentRoundEntry.hands[handIndex].actions.push(action);
+    currentRoundEntry.hands[handIndex].actionChoices.push({
+      action: action,
+      advice: advice,
+      matched: matched
+    });
+    
+    if (hintsEnabled && advice) {
+      totalPlays++;
+      let isCorrect = matched;
+      if (!isCorrect && advice === 'DOUBLE' && action === 'hit' && legal.indexOf('double') === -1) isCorrect = true;
+      if (!isCorrect && advice === 'SURRENDER' && action === 'hit' && legal.indexOf('surrender') === -1) isCorrect = true;
+      if (!isCorrect && advice === 'SPLIT' && legal.indexOf('split') === -1) {
+        const fb = getPairFallbackAdvice(currentHand.cards, s.dealer[0], legal);
+        if (action === fb) isCorrect = true;
+      }
+      
+      if (isCorrect) {
+        correctPlays++;
+      } else {
+        const dCard = s.dealer[0];
+        const handDesc = getHandDescription(currentHand.cards);
+        const actDesc = getActionPastTense(action);
+        mistakes.push(`${actDesc} on ${handDesc} vs dealer ${dCard.rank}, basic strategy says ${advice.toLowerCase()}`);
+      }
+      updateHintTally();
+    }
+  }
+
+  function recordReplayState(s, description) {
+    if (!currentRoundEntry) return;
+    const clonedGameState = {
+      phase: s.phase,
+      bankroll: s.bankroll,
+      bet: s.bet,
+      insuranceStake: s.insuranceStake,
+      dealer: s.dealer.map(function (c) { return { rank: c.rank, suit: c.suit }; }),
+      dealerHoleHidden: s.dealerHoleHidden,
+      hands: s.hands.map(function (h) {
+        return {
+          cards: h.cards.map(function (c) { return { rank: c.rank, suit: c.suit }; }),
+          bet: h.bet, doubled: h.doubled, surrendered: h.surrendered,
+          stand: h.stand, busted: h.busted, fromSplit: h.fromSplit,
+          isSplitAces: h.isSplitAces, finished: h.finished
+        };
+      }),
+      activeHandIndex: s.activeHandIndex,
+      shoeRemaining: s.shoeRemaining,
+      luckySevensCards: s.luckySevensCards ? s.luckySevensCards.map(function (c) { return { rank: c.rank, suit: c.suit }; }) : []
+    };
+    currentRoundEntry.states.push({
+      gameState: clonedGameState,
+      description: description
+    });
+  }
+
+  function saveCompletedReplayEntry(s, results) {
+    if (!currentRoundEntry) return;
+    
+    currentRoundEntry.dealerFull = s.dealer.map(function (c) { return { rank: c.rank, suit: c.suit }; });
+    currentRoundEntry.dealerTotal = results.dealerTotal;
+    currentRoundEntry.dealerBJ = results.dealerBJ;
+    currentRoundEntry.netDelta = results.totalPayout - (currentRoundEntry.bet + currentRoundEntry.sideBets.perfectPairs + currentRoundEntry.sideBets.twentyOnePlus3 + currentRoundEntry.sideBets.luckySevens);
+    
+    s.hands.forEach(function (h, idx) {
+      if (!currentRoundEntry.hands[idx]) {
+        currentRoundEntry.hands[idx] = {
+          startCards: h.cards.slice(0, 2).map(function (c) { return { rank: c.rank, suit: c.suit }; }),
+          allCards: [],
+          actions: [],
+          actionChoices: [],
+          finalTotal: 0,
+          outcome: '',
+          payout: 0
+        };
+      }
+      currentRoundEntry.hands[idx].allCards = h.cards.map(function (c) { return { rank: c.rank, suit: c.suit }; });
+      currentRoundEntry.hands[idx].finalTotal = BJ.handValue(h.cards).total;
+      currentRoundEntry.hands[idx].outcome = results.hands[idx].outcome;
+      currentRoundEntry.hands[idx].payout = results.hands[idx].payout;
+    });
+
+    currentRoundEntry.sideBetResults = {};
+    (results.sideBets || []).forEach(function (sb) {
+      currentRoundEntry.sideBetResults[sb.category] = {
+        outcome: sb.outcome,
+        payout: sb.payout
+      };
+    });
+
+    recordReplayState(s, `Round completed. Net: ${currentRoundEntry.netDelta >= 0 ? '+' : ''}$${currentRoundEntry.netDelta}.`);
+
+    const youTotals = currentRoundEntry.hands.map(function (h) { return h.finalTotal; }).join('/');
+    const outcomeStr = currentRoundEntry.hands.map(function (h) { return h.outcome.toUpperCase(); }).join('/');
+    const dSign = currentRoundEntry.netDelta >= 0 ? 'plus' : 'minus';
+    
+    currentRoundEntry.summary = `Hand ${currentRoundEntry.handNo}: bet ${currentRoundEntry.bet}, you ${youTotals}, dealer ${currentRoundEntry.dealerTotal}, ${outcomeStr}, ${dSign} ${Math.abs(currentRoundEntry.netDelta)}`;
+
+    replayHistory.unshift(currentRoundEntry);
+    if (replayHistory.length > 15) {
+      replayHistory.pop();
+    }
+    
+    try {
+      localStorage.setItem('colddeck_blackjack_history', JSON.stringify(replayHistory));
+    } catch (e) {}
+    
+    currentRoundEntry = null;
+  }
+
+  // ---------- Replay Viewer Modal Controller ----------
+  function openReplay() {
+    $('replayModal').style.display = 'flex';
+    showReplayList();
+  }
+
+  function closeReplay() {
+    $('replayModal').style.display = 'none';
+  }
+
+  function showReplayList() {
+    $('replayListArea').style.display = 'flex';
+    $('replayStepArea').style.display = 'none';
+    const area = $('replayListArea');
+    area.innerHTML = '';
+    
+    if (replayHistory.length === 0) {
+      const p = document.createElement('p');
+      p.style.color = 'var(--muted)';
+      p.style.textAlign = 'center';
+      p.style.marginTop = '24px';
+      p.style.fontFamily = 'var(--font-mono)';
+      p.textContent = 'No rounds played this session.';
+      area.appendChild(p);
+      return;
+    }
+    
+    replayHistory.forEach(function (entry) {
+      const b = document.createElement('button');
+      b.className = 'action-btn ghost';
+      b.style.width = '100%';
+      b.style.textAlign = 'left';
+      b.style.fontSize = '11px';
+      b.style.fontFamily = 'var(--font-mono)';
+      b.style.marginBottom = '6px';
+      b.style.padding = '8px 12px';
+      b.style.justifyContent = 'flex-start';
+      b.textContent = entry.summary;
+      b.onclick = function () { startStepThrough(entry); };
+      area.appendChild(b);
+    });
+  }
+
+  function startStepThrough(entry) {
+    currentReplayEntry = entry;
+    currentReplayStepIndex = 0;
+    $('replayListArea').style.display = 'none';
+    $('replayStepArea').style.display = 'flex';
+    renderReplayStep();
+  }
+
+  function advanceReplayStep() {
+    if (!currentReplayEntry) return;
+    if (currentReplayStepIndex < currentReplayEntry.states.length - 1) {
+      currentReplayStepIndex++;
+      renderReplayStep();
+    } else {
+      showReplayList();
+    }
+  }
+
+  function renderReplayStep() {
+    const entry = currentReplayEntry;
+    const step = entry.states[currentReplayStepIndex];
+    const s = step.gameState;
+    
+    $('replayStepTitle').textContent = `Round ${entry.handNo} - Step ${currentReplayStepIndex + 1}/${entry.states.length}`;
+    $('replayStatusBubble').textContent = step.description;
+    
+    const dCards = $('replayDealerCards');
+    dCards.innerHTML = '';
+    s.dealer.forEach(function (card, idx) {
+      const faceDown = (idx === 1 && s.dealerHoleHidden);
+      dCards.appendChild(cardEl(card, faceDown));
+    });
+    
+    const dTotal = $('replayDealerTotal');
+    if (!s.dealerHoleHidden && s.dealer.length > 0) {
+      dTotal.style.display = '';
+      dTotal.textContent = totalBadge(s.dealer);
+    } else {
+      dTotal.style.display = 'none';
+    }
+    
+    const pHands = $('replayPlayerHands');
+    pHands.innerHTML = '';
+    s.hands.forEach(function (h, idx) {
+      const wrap = document.createElement('div');
+      wrap.className = 'playerHand';
+      wrap.style.padding = '2px';
+      wrap.style.borderRadius = '6px';
+      if (idx === s.activeHandIndex && s.phase === PHASE.PLAYER) {
+        wrap.style.background = 'rgba(251,191,36,.08)';
+        wrap.style.boxShadow = '0 0 0 1px rgba(251,191,36,.5)';
+      }
+      wrap.style.opacity = h.finished ? '0.78' : '1';
+      
+      const head = document.createElement('div');
+      head.className = 'handHead';
+      head.style.fontSize = '8px';
+      head.textContent = `Hand ${idx + 1} ($${h.bet})`;
+      
+      const cardsRow = document.createElement('div');
+      cardsRow.style.display = 'flex';
+      cardsRow.style.gap = '4px';
+      h.cards.forEach(function (card) {
+        cardsRow.appendChild(cardEl(card, false));
+      });
+      
+      const totalRow = document.createElement('div');
+      totalRow.className = 'totalTag';
+      totalRow.style.fontSize = '8px';
+      totalRow.style.padding = '1px 4px';
+      totalRow.textContent = totalBadge(h.cards);
+      
+      wrap.appendChild(head);
+      wrap.appendChild(cardsRow);
+      wrap.appendChild(totalRow);
+      pHands.appendChild(wrap);
+    });
+    
+    const nextBtn = $('replayNextStep');
+    if (currentReplayStepIndex === entry.states.length - 1) {
+      nextBtn.textContent = 'Finish';
+    } else {
+      nextBtn.textContent = 'Next \u2192';
+    }
+  }
+
+  function resetBankroll() {
+    tokesPaid = 0;
+    game = BJ.createGame({ bankroll: 1000, minBet: 5, maxBet: 500 });
+    localStorage.setItem('colddeck_blackjack_bankroll', 1000);
+    replayHistory = [];
+    localStorage.removeItem('colddeck_blackjack_history');
+    correctPlays = 0;
+    totalPlays = 0;
+    mistakes = [];
+    updateHintTally();
+    pending = { main: 0, perfectPairs: 0, twentyOnePlus3: 0, luckySevens: 0 };
+    clearAllBets();
+    setQuip(pick(QUIPS.open));
+  }
+
+  // Toggles Event Listeners
+  $('hintsOn').onclick = function () {
+    $('hintsOn').classList.add('on');
+    $('hintsOff').classList.remove('on');
+    hintsEnabled = true;
+    refreshBankrollAndBets();
+  };
+  $('hintsOff').onclick = function () {
+    $('hintsOff').classList.add('on');
+    $('hintsOn').classList.remove('on');
+    hintsEnabled = false;
+    refreshBankrollAndBets();
+  };
+  $('coachOn').onclick = function () {
+    $('coachOn').classList.add('on');
+    $('coachOff').classList.remove('on');
+    coachEnabled = true;
+    refreshBankrollAndBets();
+  };
+  $('coachOff').onclick = function () {
+    $('coachOff').classList.add('on');
+    $('coachOn').classList.remove('on');
+    coachEnabled = false;
+    refreshBankrollAndBets();
+  };
+  $('openReplayBtn').onclick = openReplay;
+  $('closeReplay').onclick = closeReplay;
+  $('replayBackToList').onclick = showReplayList;
+  $('replayNextStep').onclick = advanceReplayStep;
+
   // ---------- boot ----------
   setQuip(pick(QUIPS.open));
   setPhaseTag('BETTING');
@@ -1375,5 +2167,56 @@ header{
   renderActions();
 })();
 </script>
+<!-- Session Replay Modal -->
+<div id="replayModal" style="position:fixed; inset:0; background:rgba(0,0,0,0.85); display:none; align-items:center; justify-content:center; z-index:90; padding:14px;">
+  <div style="background:linear-gradient(180deg,#15110b,#0c0a07); border:1px solid #3a2f1c; border-radius:14px; padding:16px; max-width:540px; width:100%; max-height:85vh; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,.6); color:var(--text);">
+    
+    <!-- Header -->
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #2a241a; padding-bottom:8px; margin-bottom:12px;">
+      <h3 style="font-family:var(--font-display); color:var(--gold); margin:0; font-size:18px;">Session Replay</h3>
+      <button id="closeReplay" class="h-btn" style="margin-left:auto; padding:4px 8px; font-family:var(--font-mono); font-size:10px;">Close</button>
+    </div>
+
+    <!-- Hand List View -->
+    <div id="replayListArea" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px;">
+      <!-- round list injected here -->
+    </div>
+
+    <!-- Step-Through Replay View -->
+    <div id="replayStepArea" style="flex:1; display:none; flex-direction:column; gap:12px; overflow-y:auto;">
+      <!-- step controls -->
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; border-bottom:1px dashed rgba(255,255,255,0.1); padding-bottom:6px;">
+        <button id="replayBackToList" class="h-btn" style="padding:4px 8px; font-family:var(--font-mono); font-size:10px;">&larr; List</button>
+        <span id="replayStepTitle" style="font-family:var(--font-mono); font-size:11px; color:var(--gold-dim);">Round 1 - Step 0</span>
+        <button id="replayNextStep" class="action-btn primary" style="padding:4px 10px; font-size:11px; min-width:60px; height:28px; line-height:1;">Next &rarr;</button>
+      </div>
+
+      <!-- Replay Felt Visualizer -->
+      <div style="background:radial-gradient(circle, #0e3025 0%, #061813 100%); border:2px solid var(--rail); border-radius:10px; aspect-ratio:4/3; position:relative; padding:10px; display:flex; flex-direction:column; justify-content:space-between; min-height:220px; box-shadow: inset 0 0 30px rgba(0,0,0,0.5);">
+        
+        <!-- Replay Dealer -->
+        <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+          <div style="font-family:var(--font-mono); font-size:9px; color:var(--gold-dim);">DEALER</div>
+          <div id="replayDealerCards" style="display:flex; gap:4px; min-height:44px;"></div>
+          <div id="replayDealerTotal" class="totalTag" style="font-size:9px; padding:1px 6px; display:none;"></div>
+        </div>
+
+        <!-- Replay Status / Bubble -->
+        <div id="replayStatusBubble" style="font-family:var(--font-mono); font-size:10px; color:var(--ice); text-align:center; padding:4px 8px; background:rgba(0,0,0,0.4); border-radius:6px; border:1px solid rgba(125,211,252,0.2); width:85%; margin:0 auto; line-height:1.3;">
+          Initial cards dealt.
+        </div>
+
+        <!-- Replay Player -->
+        <div style="display:flex; flex-direction:column; align-items:center; gap:2px;">
+          <div id="replayPlayerHands" style="display:flex; gap:14px; justify-content:center; width:100%; flex-wrap:wrap;"></div>
+          <div style="font-family:var(--font-mono); font-size:9px; color:var(--gold-dim);">YOU</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
 </body>
 </html>
