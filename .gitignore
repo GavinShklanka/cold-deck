@@ -1,0 +1,8 @@
+# Cold Deck Card Room: keep the repo tidy.
+.DS_Store
+Thumbs.db
+node_modules/
+.env
+.env.*
+*.pem
+*.key
